@@ -47,12 +47,12 @@ public:
     }
     
     Kmer(uint8_t k) : k(k) {
-        assert(k <= min(max_len, (int64_t)255));
+        check_true(k <= min(max_len, (int64_t)255), "k-mer length exceeds maximum length");
         clear();
     }
 
     Kmer(const string& S) : k(S.size()) {
-        assert(S.size() <= min(max_len, (int64_t)255));
+        check_true(k <= min(max_len, (int64_t)255), "k-mer length exceeds maximum length");
         clear();
         for(int64_t i = 0; i < (int64_t)S.size(); i++){
             set(i, S[i]);
@@ -60,7 +60,7 @@ public:
     }
 
     Kmer(const char* S, uint8_t k) : k(k) {
-        assert(k <= min(max_len, (int64_t)255));
+        check_true(k <= min(max_len, (int64_t)255), "k-mer length exceeds maximum length");
         clear();
         for(int64_t i = 0; i < k; i++){
             set(i, S[i]);
@@ -225,6 +225,10 @@ public:
         memcpy((char*)(data), in, sizeof(data));
         memcpy((char*)(&k), in + sizeof(data), sizeof(k));
         assert(k <= min(max_len, (int64_t)255));
+    }
+
+    int64_t size() const {
+        return k;
     }
 
 };

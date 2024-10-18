@@ -1,5 +1,10 @@
 #pragma once
 
+//#include <bit>
+#include <bitset>
+#include <cstdint>
+#include <iostream>
+
 #include <vector>
 #include <sdsl/bit_vectors.hpp>
 #include <sdsl/rank_support_v.hpp>
@@ -9,6 +14,7 @@
 #include "kmc_construct.hh"
 #include "globals.hh"
 #include "Kmer.hh"
+#include "batch_query.hh"
 #include <map>
 #include <optional>
 
@@ -19,6 +25,10 @@ This file contains a class that implements the SBWT index described in the paper
 Alanko, J. N., Puglisi, S. J., & Vuohtoniemi, J. (2022). Succinct k-mer Set 
 Representations Using Subset Rank Queries on the Spectral Burrows-Wheeler 
 Transform (SBWT). bioRxiv.
+
+And methods to support batched k-mer lookup queries with the SBWT described in the paper:
+
+Batched k-mer lookup on the Spectral Burrows-Wheeler Transform
 */
 
 using namespace std;
@@ -184,24 +194,117 @@ public:
     int64_t search(const char* kmer) const;
 
     /**
-    * @brief Searches for up to the first len characters of the input. For k-mer lookups, it's
-    *        better to use `search` because it uses a precalculated lookup table to speed up the search.
-    * @param input The input string.
-    * @param len The length of the input string.
-    * @return {{l,r}, d}, where [l,r] is the colexicographic interval of the longest
-    *         prefix of the input that is found in the index, and len is the length of that prefix. 
-    * @see search()
-    */
+     * @brief Prepare the queues for batch querying.
+     * 
+     * @param queries The input query vector
+     * @param read_queues The queues to be filled with queries
+     * @param results The vector of result indices
+     */
+    void prepare_queues(std::vector<batch_query>& queries, std::array<std::vector<batch_query>, 4>& read_queues, std::vector<int64_t>& results) const;
+
+    /**
+     * @brief The main logic of vertical batch querying.
+     * 
+     * @param read_queue The queue of queries being read/processed
+     * @param results The vector of result indices
+     * @param write_queues The four write queues (one for each character)
+     * @param qk_idx The index of current k-mer character being processed
+     */
+    void process_queue(std::vector<batch_query>& read_queue, std::vector<int64_t>& results, std::array<std::vector<batch_query>, 4>& write_queues, int64_t qk_idx) const;
+
+
+    void process_queue_scanning(std::vector<batch_query>& read_queue, std::vector<int64_t>& results, std::array<std::vector<batch_query>, 4>& write_queues, int64_t qk_idx, const sdsl::bit_vector** DNA_bitvectors, vector<pair<int64_t, int64_t>>& s_pointers, vector<pair<int64_t, int64_t>>& e_pointers) const;
+
+    /**
+     * @brief Empty the queue into results once processing has completed.
+     * 
+     * @param read_queue The queue of queries to transform into results
+     * @param results The vector of result indices to fill up based on the query intervals in the read_queue
+     */
+    void empty_queue(std::vector<batch_query>& read_queue, std::vector<int64_t>& results) const;
+ 
+    /**
+     * @brief Search for a batch of k-mers as batch_query types.
+     * 
+     * @param batch The vector of k-mers to search for.
+     * @return A vector of the rank of each k-mer in the data structure, or -1 if the k-mer is not in the index.
+     */
+    std::vector<int64_t> batch_search(std::vector<batch_query>&) const;
+
+    /**
+     * @brief Scan a bit vector from "start" to "end' instead of using sdsl rank operations.
+     * 
+     * @param start The starting index
+     * @param end The ending index
+     * @param Bit_v The bit vector
+     */
+    int64_t scanning(int64_t start, const int64_t end, const sdsl::bit_vector& Bit_v) const;
+
+    /**
+     * @brief The main logic of vertical batch querying scanning bitvectors instead of using rank.
+     * 
+     * @param read_queue The queue of queries being read/processed
+     * @param results The vector of result indices
+     * @param write_queues The four write queues (one for each character)
+     * @param qk_idx The index of current k-mer character being processed
+     * @param DNA_bitvectors The SBWT matrix bit vectors
+     * @param s_pointers The vector with pairs of starting indices of lexicographic rank interval, and rank values, for each char
+     * @param e_pointers The vector with pairs of ending indices of lexicographic rank interval, and rank values, for each char
+     */
+    void process_queues_scanning(std::vector<batch_query>& read_queue, std::vector<int64_t>& results, std::array<std::vector<batch_query>, 4>& write_queues, int64_t qk_idx, const sdsl::bit_vector** DNA_bitvectors, vector<pair<int64_t, int64_t>>& s_pointers, vector<pair<int64_t, int64_t>>& e_pointers) const;
+
+    /**
+     * @brief Search for a batch of k-mers as batch_query types without usign rank.
+     * 
+     * @param queries The vector of k-mers to search for.
+     * @param DNA_bitvectors The SBWT binary matrix bitvcetors
+     * @return A vector of the rank of each k-mer in the data structure, or -1 if the k-mer is not in the index.
+     */
+    std::vector<int64_t> batch_search_scanning(std::vector<batch_query>& queries, const sdsl::bit_vector** DNA_bitvectors) const;
+
+    /**
+     * @brief Search for a batch of k-mers using the LCS array 
+     * 
+     * @param batch The vector of reads to search for.
+     * @param lcs The LCS array 
+     * @return A vector of the rank of each k-mer in the data structure, or -1 if the k-mer is not in the index.
+     */
+    std::vector<int64_t> batch_streaming_search_lcs(std::vector<StreamingQuery>&, const sdsl::int_vector<>& lcs) const;
+
+    // Helper functions used in streaming search
+    tuple<int64_t, int64_t, int64_t, int64_t, int64_t> expand_interval(int64_t start, int64_t end, char c, int64_t match_len, int64_t rank_start, int64_t rank_past_end, const sdsl::int_vector<>& lcs) const;
+    tuple<int64_t, int64_t, int64_t, int64_t, int64_t> expand_interval_alternative(int64_t start, int64_t end, char c, int64_t match_len, int64_t rank_start, int64_t rank_past_end, const sdsl::int_vector<>& lcs) const;
+
+    /**
+     * @brief Search for all k-mers the query using the lcs array for streaming
+     * 
+     * @param query The query string
+     * @param query_length Length of the query string
+     * @param lcs The LCS array 
+     * @return A vector of the rank of each k-mer in the data structure, or -1 if the k-mer is not in the index.
+     */
+    std::vector<int64_t> streaming_search_lcs(const char* query, int64_t query_length, const sdsl::int_vector<>& lcs) const;
+
+
+    /**
+     * @brief Searches for up to the first len characters of the input. For k-mer lookups, it's
+     *        better to use `search` because it uses a precalculated lookup table to speed up the search.
+     * @param input The input string.
+     * @param len The length of the input string.
+     * @return {{l,r}, d}, where [l,r] is the colexicographic interval of the longest
+     *         prefix of the input that is found in the index, and len is the length of that prefix. 
+     * @see search()
+     */
     std::pair<std::pair<int64_t, int64_t>, int64_t> partial_search(const char* input, int64_t len) const;
 
     /**
-    * @brief Searches for up to the first len characters of the input. For k-mer lookups, it's
-    *        better to use `search` because it uses a precalculated lookup table to speed up the search.
-    * @param input The input string.
-    * @return {{l,r}, d}, where [l,r] is the colexicographic interval of the longest
-    *         prefix of the input that is found in the index, and len is the length of that prefix. 
-    * @see search()
-    */
+     * @brief Searches for up to the first len characters of the input. For k-mer lookups, it's
+     *        better to use `search` because it uses a precalculated lookup table to speed up the search.
+     * @param input The input string.
+     * @return {{l,r}, d}, where [l,r] is the colexicographic interval of the longest
+     *         prefix of the input that is found in the index, and len is the length of that prefix. 
+     * @see search()
+     */
     std::pair<std::pair<int64_t, int64_t>, int64_t> partial_search(const std::string& input) const;
 
     /**
@@ -313,22 +416,6 @@ public:
 
     template<typename subset_select_support_t>
     void get_kmer_fast(int64_t colex_rank, char* buf, const subset_select_support_t& ss) const;
-
-    /**
-     * @brief Writes index metadata in ascii.
-     * 
-     * @param out The output stream.
-     */
-    template<typename out_stream_t>
-    void ascii_export_metadata(out_stream_t& out) const;
-
-    /**
-     * @brief Write the concatenation of SBWT sets, with sets separated by '|'.
-     * 
-     * @param out The output stream.
-     */
-    template<typename out_stream_t>
-    void ascii_export_sets(out_stream_t& out) const;
 };
 
 
@@ -392,7 +479,6 @@ int64_t SBWT<subset_rank_t>::search(const char* kmer) const{
     
     if(precalc_k > 0){ // Precalc is available
         // Find the index of the k-mer prefix in the precalc table (see do_kmer_prefix_precalc).
-        // Todo: do this in a more bit-parallel way
         uint64_t precalc_idx = 0;
         for(int64_t i = 0; i < precalc_k; i++){
             int64_t char_idx = DNA_to_char_idx(kmer[precalc_k-1-i]);
@@ -413,6 +499,453 @@ int64_t SBWT<subset_rank_t>::search(const char* kmer) const{
     }
     return I.first;
 }
+
+
+// Prepare the queues based on the first character of each query
+template <typename subset_rank_t>
+void SBWT<subset_rank_t>::prepare_queues(std::vector<batch_query>& queries, std::array<std::vector<batch_query>, 4>& read_queues, std::vector<int64_t>& results) const {
+
+    // Get the interval for each character in the alphabet
+    std::array<std::pair<int64_t, int64_t>, 4> init_intervals;
+    for (int64_t char_idx = 0; char_idx < 3; ++char_idx) {
+        int64_t l = C[char_idx]; 
+        int64_t r = C[char_idx+1] - 1;
+        init_intervals[char_idx] = {l, r};
+    }
+    init_intervals[3]={C[3], n_nodes - 1};
+
+    // Init the queues according to the first character of each query
+    size_t query_idx = 0;
+    for (auto &query : queries) {
+        char c = query.char_at(0);
+        int64_t char_idx = get_char_idx(c);
+        query.update_interval(init_intervals[char_idx]);
+        if (c != -1) read_queues[char_idx].push_back(query);
+        else results[query_idx] = -1; // non-acgt character
+        query_idx += 1;
+    }
+}
+
+// Vertical batch search
+template <typename subset_rank_t>
+void SBWT<subset_rank_t>::process_queue(std::vector<batch_query>& read_queue, std::vector<int64_t>& results, std::array<std::vector<batch_query>, 4>& write_queues, int64_t qk_idx) const {
+
+    // Temporary interval
+    pair<int64_t, int64_t> I;
+ 
+    // Rip thru each queue
+    for (auto &query : read_queue) {
+        char c = query.char_at(qk_idx);
+        int64_t char_idx = get_char_idx(c);
+        if(char_idx == -1) {
+          results[query.get_idx()] = -1; // Invalid character
+          continue;
+        }
+ 
+        I = query.get_interval();
+        I.first = C[char_idx] + subset_rank.rank(I.first, c);
+        I.second = C[char_idx] + subset_rank.rank(I.second+1, c) - 1;
+        // Not found
+        if(I.first > I.second) { 
+            results[query.get_idx()] = -1;
+        } 
+        // Still alive... Update the interval and add to new queue
+        else {
+            query.update_interval(I);
+            write_queues[char_idx].push_back(query);
+        } 
+    }
+}
+
+template <typename subset_rank_t>
+void SBWT<subset_rank_t>::empty_queue(std::vector<batch_query>& read_queue, std::vector<int64_t>& results) const {
+
+    // Temporary interval
+    pair<int64_t, int64_t> I;
+ 
+    // Rip thru each queue
+    for (const auto &query : read_queue) {
+        I = query.get_interval();
+        // Bug...
+        if(I.first != I.second){
+            cerr << "While emptying the queue... Bug: k-mer search did not give a singleton interval: " << I.first << " " << I.second << endl;
+            exit(1);
+        }
+        results[query.get_idx()] = I.first;
+    }
+}
+
+template <typename subset_rank_t>
+std::vector<int64_t> SBWT<subset_rank_t>::batch_search(std::vector<batch_query>& queries) const {
+
+    // Storage for results
+    std::vector<int64_t> results(queries.size());
+
+    // Track the current character and effective length of k-mers 
+    size_t qk_idx = 0;
+    
+    // 0 = A, 1 = C, 2 = G, 3 = T
+    std::array<std::vector<batch_query>, 4> read_queues;
+    std::array<std::vector<batch_query>, 4> write_queues;
+
+    // Pay for the worst-case storage cost up-front
+    for (size_t i = 0; i < 4; ++i) {
+        read_queues[i].reserve(queries.size());
+        write_queues[i].reserve(queries.size());
+    }
+
+    // Do not apply precalc to vertical batch
+    prepare_queues(queries, read_queues, results);
+    qk_idx = 1;
+   
+    // For each successive character up to k
+    for (; qk_idx < k; ++qk_idx) {
+
+      // Process the queues in A>C>G>T order
+      for (auto &queue : read_queues) {
+          process_queue(queue, results, write_queues, qk_idx);
+          queue.clear();
+      }
+      // Read queues and now write queues, vv.
+      std::swap(read_queues, write_queues);
+    }
+
+    // Processing is complete. Time to collect answers
+    for (auto &queue : read_queues) {
+        empty_queue(queue, results);
+    }
+    
+    return results;
+}
+
+
+
+template <typename subset_rank_t>
+int64_t SBWT<subset_rank_t>::scanning(int64_t start, const int64_t end, const sdsl::bit_vector& Bit_v) const {
+
+    int64_t count_of_1s = 0;
+
+    int64_t len = end-start;
+    if (len < 64){
+        count_of_1s += __builtin_popcountll(Bit_v.get_int(start, len));
+        return count_of_1s;
+    }
+
+    // from start to 64-bit boundary
+    if (start % 64 != 0) {
+        int64_t max_start = ((start / 64) +1) * 64;
+            count_of_1s += __builtin_popcountll(Bit_v.get_int(start,max_start - start)); // do not consider the last char now
+            start = max_start;
+    }
+
+    // 64-bit blocks
+    while (start + 64 <= end) {
+        int64_t block_idx = start / 64;
+        count_of_1s += __builtin_popcountll(Bit_v.data()[block_idx]);
+        start += 64;
+    }
+
+    // till the end
+    if(start < end){
+        count_of_1s += __builtin_popcountll(Bit_v.get_int(start,end-start));
+    }
+    
+    return count_of_1s;
+}
+
+template <typename subset_rank_t>
+void SBWT<subset_rank_t>::process_queue_scanning(std::vector<batch_query>& read_queue, std::vector<int64_t>& results, std::array<std::vector<batch_query>, 4>& write_queues, int64_t qk_idx, const sdsl::bit_vector** DNA_bitvectors, vector<pair<int64_t, int64_t>>& s_pointers, vector<pair<int64_t, int64_t>>& e_pointers) const {
+    
+    // Temporary interval
+    pair<int64_t, int64_t> I;
+
+    // Rip thru each queue
+    for (auto &query : read_queue) {
+        char c = query.char_at(qk_idx);
+        int64_t char_idx = get_char_idx(c);
+        if(char_idx == -1) {
+          results[query.get_idx()] = -1; // Invalid character
+          continue;
+        }
+        I = query.get_interval();
+        const sdsl::bit_vector& Bit_v = *(DNA_bitvectors[char_idx]);
+        
+        if (I.first > s_pointers[char_idx].first){
+            s_pointers[char_idx].second += scanning(s_pointers[char_idx].first,I.first,Bit_v); // scan the missing part, update the number of c found
+            s_pointers[char_idx].first = I.first; //update the scanned length
+
+        }
+        if (e_pointers[char_idx] < s_pointers[char_idx]){ e_pointers[char_idx] = s_pointers[char_idx];}
+        if (I.second+1 > e_pointers[char_idx].first){
+            e_pointers[char_idx].second += scanning(e_pointers[char_idx].first,I.second+1,Bit_v); // scan the missing part
+            e_pointers[char_idx].first = I.second+1;
+
+        } 
+        // We only want to know how many chars are there inside the interval
+        I.first = C[char_idx] + s_pointers[char_idx].second;
+        I.second = C[char_idx] + e_pointers[char_idx].second - 1;
+        
+        // Not found
+        if(I.first > I.second) { 
+            results[query.get_idx()] = -1;
+        } 
+        // Still alive... Update the interval and add to new queue
+        else {
+            query.update_interval(I);
+            write_queues[char_idx].push_back(query);
+        } 
+    }
+}
+
+// Horizontal batch search scanning keeping track of pointers [plain-matirx only]
+template <typename subset_rank_t>
+std::vector<int64_t> SBWT<subset_rank_t>::batch_search_scanning(std::vector<batch_query>& queries, const sdsl::bit_vector** DNA_bitvectors) const { // bool pointers,
+
+    std::vector<int64_t> results(queries.size());
+    // Track the current character and effective length of k-mers 
+    size_t qk_idx = 0;
+    
+    // 0 = A, 1 = C, 2 = G, 3 = T
+    std::array<std::vector<batch_query>, 4> read_queues;
+    std::array<std::vector<batch_query>, 4> write_queues;
+
+    // Pay now
+    for (size_t i = 0; i < 4; ++i) {
+        read_queues[i].reserve(queries.size());
+        write_queues[i].reserve(queries.size());
+    }
+
+    // Do not apply precalc to vertical batch
+    prepare_queues(queries, read_queues, results);
+    qk_idx = 1;
+ 
+    // For each successive character up to k
+    for (; qk_idx < k; ++qk_idx) {
+
+        // {x,y} y(.second) how many c before x excluded
+        vector<pair<int64_t, int64_t>> s_pointers = {{0,0},{0,0},{0,0},{0,0}};
+        vector<pair<int64_t, int64_t>> e_pointers = {{0,0},{0,0},{0,0},{0,0}};
+
+        // Rip thru each queue
+        for (auto &queue : read_queues) {
+            process_queue_scanning(queue, results, write_queues, qk_idx, DNA_bitvectors, s_pointers, e_pointers);
+            queue.clear();
+            s_pointers = e_pointers;
+        }
+        std::swap(read_queues, write_queues);
+
+    }
+
+    // Collect answers
+    for (auto &queue : read_queues) {
+        empty_queue(queue, results);
+    }
+
+    return results;
+}
+
+template <typename subset_rank_t>
+tuple<int64_t, int64_t, int64_t, int64_t, int64_t> SBWT<subset_rank_t>::expand_interval(int64_t start, int64_t end, char c, int64_t match_len, int64_t rank_start, int64_t rank_past_end, const sdsl::int_vector<>& lcs) const {
+
+    int64_t c_idx = from_ACGT_to_0123_lookup_table[c];
+    check_true(c_idx >= 0, "Interval expansion called on invalid character");
+
+    int64_t new_match_len = match_len;
+    while(rank_start == rank_past_end && new_match_len > 0){
+        new_match_len--;
+
+        while(start > 0 && lcs[start] >= new_match_len) {
+            start--;
+            rank_start -= subset_rank.contains_by_char_idx(start, c_idx);
+        }
+        while(end+1 < this->number_of_subsets() && lcs[end+1] >= new_match_len) {
+            end++;
+            rank_past_end += subset_rank.contains_by_char_idx(end, c_idx);
+        }
+    }
+    
+    return {start, end, new_match_len, rank_start, rank_past_end};
+}
+
+template <typename subset_rank_t>
+tuple<int64_t, int64_t, int64_t, int64_t, int64_t> SBWT<subset_rank_t>::expand_interval_alternative(int64_t start, int64_t end, char c, int64_t match_len, int64_t rank_start, int64_t rank_past_end, const sdsl::int_vector<>& lcs) const {
+
+    int64_t new_match_len = match_len;
+    while(rank_start == rank_past_end && new_match_len > 0){
+        new_match_len--;
+
+        while(start > 0 && lcs[start] >= new_match_len) {
+            start--;
+        }
+        while(end+1 < this->number_of_subsets() && lcs[end+1] >= new_match_len) {
+            end++;
+        }
+
+        rank_start = subset_rank.rank(start, c);
+        rank_past_end = subset_rank.rank(end+1, c);
+    }
+    
+    return {start, end, new_match_len, rank_start, rank_past_end};
+}
+
+template <typename subset_rank_t>
+std::vector<int64_t> SBWT<subset_rank_t>::batch_streaming_search_lcs(std::vector<StreamingQuery>& queries, const sdsl::int_vector<>& lcs) const {
+
+    check_true(lcs.size() == this->number_of_subsets(), "LCS must have the same length as the SBWT");
+
+    // We assume all queries are of equal length. Verify that.
+    check_true(queries.size() > 0, "Query vector is empty");
+    int64_t n = queries[0].read.size();
+    for(auto& q : queries) check_true(q.read.size() == n, "All queries need to have the same length");
+    check_true(n >= get_k(), "Queries need to be longer or equal to length k");
+
+    int64_t total_number_of_kmers = queries.size() * (n - get_k() + 1);
+
+    // Setup output writing pointers for queries
+    vector<int64_t> all_answers(total_number_of_kmers);
+    int64_t cumul_kmer_count = 0;
+    for(StreamingQuery& query : queries){
+        query.result_write_ptr = all_answers.data() + cumul_kmer_count;
+        cumul_kmer_count += n - get_k() + 1;
+    }
+
+    // Five queues: N, A, C, G, T. The N-queue contains everything that is not from ACGT.
+    std::array<std::vector<StreamingQuery>, 5> read_queues; 
+    std::array<std::vector<StreamingQuery>, 5> write_queues;
+
+    std::swap(read_queues[0], queries); // Put the queries in the first read queue
+    // From now on we must not accidentally access the original query vector
+
+    auto reset_interval = [this](StreamingQuery& query, int64_t character_count){
+        query.colex_start = 0;
+        query.colex_end = this->number_of_subsets() - 1;
+        query.match_len = 0;
+    };
+
+    for(int64_t round = 0; round < n; round++) {
+        for(int64_t queue_idx = 0; queue_idx < 5; queue_idx++) {
+            for(StreamingQuery& query : read_queues[queue_idx]) {
+                char c = query.read.get(query.pos); 
+                int64_t char_idx = get_char_idx(c);
+
+                if(char_idx >= 0) {
+                    int64_t rank_start = subset_rank.rank(query.colex_start, c);
+                    int64_t rank_past_end = subset_rank.rank(query.colex_end+1, c);
+
+                    // Expand interval
+                    tie(query.colex_start, query.colex_end, query.match_len, rank_start, rank_past_end) = expand_interval(query.colex_start, query.colex_end, c, query.match_len, rank_start, rank_past_end, lcs);
+
+                    // Update interval
+                    query.colex_start = C[char_idx] + rank_start; 
+                    query.colex_end = C[char_idx] + rank_past_end - 1; 
+
+                    if(query.colex_end >= query.colex_start) {
+                        // Successful extension
+                        query.match_len = min((uint8_t) (query.match_len + 1), (uint8_t) k);
+                    } else {
+                        // Unsuccessful extension -> back to interval of the empty string
+                        reset_interval(query, 0);
+                    }
+                } else { // Invalid character -> expand all the way to the full interval
+                    reset_interval(query, 0);
+                }
+                
+                // Report result
+                if(query.pos >= k-1){
+                    // We have now read a full k-mer
+                    if(query.match_len == this->get_k()) {
+                        check_true(query.colex_start == query.colex_end, "BUG: interval not singleton"); // Must be singleton interval, otherwise bug
+                        query.write_answer(query.colex_start);
+                    } else {
+                        query.write_answer(-1);
+                    }
+                }
+
+                query.pos++;
+
+                // Determine output queue.
+                int64_t write_queue_index = char_idx + 1; // -1 0 1 2 3 -> 0 1 2 3 4
+
+                // Write with std::move to avoid heap copies
+                write_queues[write_queue_index].push_back(std::move(query));
+
+            }
+
+        }
+
+        // Make write queues into read queues for the next round
+        for(int64_t queue_idx = 0; queue_idx < 5; queue_idx++) {
+            read_queues[queue_idx].clear();
+            std::swap(read_queues[queue_idx], write_queues[queue_idx]);
+        }
+    }
+
+    return all_answers;
+
+}
+
+template <typename subset_rank_t>
+std::vector<int64_t> SBWT<subset_rank_t>::streaming_search_lcs(const char* query, int64_t query_length, const sdsl::int_vector<>& lcs) const {
+    if(query_length < this->get_k()) return {};
+
+    int64_t n_kmers = query_length - this->get_k() + 1;
+    vector<int64_t> answers;
+    answers.reserve(n_kmers);
+
+    // Algorithm state
+    int64_t colex_start = 0;
+    int64_t colex_end = number_of_subsets();
+    int64_t match_len = 0;
+    int64_t rank_start, rank_past_end;
+
+    auto reset_interval = [&colex_start, &colex_end, &match_len, &rank_start, &rank_past_end, this](){
+        colex_start = 0;
+        colex_end = this->number_of_subsets() - 1;
+        match_len = 0;
+        rank_start = 0;
+        rank_past_end = 0;
+    };
+
+    for(int64_t i = 0; i < query_length; i++){
+        char c = query[i];
+        int64_t char_idx = from_ACGT_to_0123_lookup_table[c];
+
+        // Expand interval
+        if(char_idx >= 0) { // c is from the alphabet ACGT
+            rank_start = subset_rank.rank(colex_start, c);
+            rank_past_end = subset_rank.rank(colex_end+1, c);
+            tie(colex_start, colex_end, match_len, rank_start, rank_past_end) = expand_interval(colex_start, colex_end, c, match_len, rank_start, rank_past_end, lcs);
+
+            // Update interval
+            colex_start = C[char_idx] + rank_start; 
+            colex_end = C[char_idx] + rank_past_end - 1; 
+
+            if(colex_end >= colex_start) {
+                // Successful extension
+                match_len = min(match_len + 1, get_k());
+            } else {
+                // Unsuccessful extension -> back to interval of the empty string
+                reset_interval();
+            }
+        } else { // Invalid character -> expand all the way to the full interval
+            reset_interval();
+        }
+
+        // Store result
+        if(i >= k-1){
+            // We have now read a full k-mer
+            if(match_len == get_k()) {
+                check_true(colex_start == colex_end, "BUG: interval not singleton"); // Must be singleton interval, otherwise bug
+                answers.push_back(colex_start);
+            } else {
+                answers.push_back(-1);
+            }
+        }
+    }
+
+    return answers;
+}
+
 
 template<typename subset_rank_t>
 std::pair<int64_t,int64_t> SBWT<subset_rank_t>::update_sbwt_interval(const string& S, pair<int64_t,int64_t> I) const{
@@ -743,44 +1276,7 @@ void SBWT<subset_rank_t>::get_kmer_fast(int64_t colex_rank, char* buf, const sub
             colex_rank = ss.select(char_rel_rank, c);
         }
     }
-}
 
-template<typename subset_rank_t>
-template<typename out_stream_t>
-void SBWT<subset_rank_t>::ascii_export_sets(out_stream_t& out) const {
-    char current_set[4] = {0,0,0,0};
-    int64_t current_set_size = 0;
-
-    for(int64_t colex = 0; colex < number_of_subsets(); colex++) {
-        for(char c : alphabet) {
-            if(subset_rank.contains(colex, c)) {
-                current_set[current_set_size++] = c;
-            }
-        }
-
-        if(current_set_size == 0){
-            // Empty set
-            current_set[0] = '$';
-            current_set_size = 1;
-        } else {
-            current_set[current_set_size-1] = tolower(current_set[current_set_size-1]); // Mark the last character
-        }
-
-        out.write(current_set, current_set_size);
-        current_set_size = 0;
-    }
-    out.write("\n", 1);
-}
-
-template<typename subset_rank_t>
-template<typename out_stream_t>
-void SBWT<subset_rank_t>::ascii_export_metadata(out_stream_t& out) const {
-    stringstream ss;
-    ss << "version: " << SBWT_VERSION << "\n";
-    ss << "k: " << k << "\n";
-    ss << "number_of_sets: " << n_nodes << "\n";
-    ss << "number_of_kmers: " << n_kmers << "\n";
-    out.write(ss.str().c_str(), ss.str().size());
 }
 
 } // namespace sbwt

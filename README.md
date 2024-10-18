@@ -1,4 +1,11 @@
-# SBWT
+# BatchSBWT
+
+This is the code for the paper [Batched k-mer lookup on the Spectral Burrows-Wheeler Transform]() at ALENEX 2025. The repo is based on the original [SBWT](https://github.com/algbio/SBWT) repo (from commit `8013ade`). The original README is preserved below.
+
+Our batch processing schemes only apply to `plain-matrix` and `mef-split` indexes. To run batch processing, simply append the `-b` flag to the `search` program. You can use the pointer-based scanning during batch processing by also providing `--pointers` (or `-p`).
+If you would like to use the batch processing for streaming queries, you need to provide an LCS array via `--lcs-file <path>`.
+
+# Original Instructions
 
 This is the code for the paper [Succinct k-mer Set Representations Using Subset Rank Queries on the Spectral Burrows-Wheeler Transform (SBWT)](https://www.biorxiv.org/content/10.1101/2022.05.19.492613v1). The repository includes implementations of the various SBWT variants described in the paper. The data structures answer k-mer membership queries on the input data. Note that contrary to many other k-mer membership data structures, our code is not aware of DNA reverse complements. That is, it considers a k-mer and its reverse complement as separate k-mers.
 
